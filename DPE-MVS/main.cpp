@@ -225,7 +225,7 @@ void ProcessProblem(const Problem &problem) {
 		SaveFinalDepthOutputs(depth, &pixel_states, depth_vis_path, depth_npy_path, problem.save_visualization);
 		const path weak_vis_path = problem.result_folder / path("weak.jpg");
 		const path weak_npy_path = problem.result_folder / path("weak.npy");
-		SaveFinalWeakOutput(pixel_states, weak_vis_path, weak_npy_path, problem.save_visualization);
+		SaveFinalWeakOutput(pixel_states, weak_vis_path, weak_npy_path, problem.save_visualization, problem.save_weak_npy);
 	}
 
 	if (problem.show_medium_result) {
@@ -256,12 +256,13 @@ void ProcessProblem(const Problem &problem) {
 
 int main(int argc, char **argv) {
 	if (argc < 2) {
-		std::cerr << "USAGE: DPE dense_folder [gpu_index] [--no_fusion] [--no_viz]\n";
+		std::cerr << "USAGE: DPE dense_folder [gpu_index] [--no_fusion] [--no_viz] [--no_weak]\n";
 		return EXIT_FAILURE;
 	}
 	path dense_folder(argv[1]);
 	bool skip_fusion = false;
 	bool skip_visualization = false;
+	bool skip_weak_npy = false;
 	path output_folder = dense_folder / path(OUT_NAME);
 	create_directory(output_folder);
 	// set cuda device for multi-gpu machine
@@ -273,6 +274,8 @@ int main(int argc, char **argv) {
 			skip_fusion = true;
 		} else if (arg == "--no_viz") {
 			skip_visualization = true;
+		} else if (arg == "--no_weak") {
+			skip_weak_npy = true;
 		} else {
 			if (!gpu_set) {
 				gpu_index = std::atoi(arg.c_str());
@@ -298,6 +301,7 @@ int main(int argc, char **argv) {
 	for (auto &problem : problems) {
 		problem.show_medium_result = false;
 		problem.save_visualization = !skip_visualization;
+		problem.save_weak_npy = !skip_weak_npy;
 		problem.params.max_scale_size = 1;
 		for (int i = 0; i < round_num; ++i) {
 			problem.scale_size = static_cast<int>(std::pow(2, round_num - 1 - i)); // scale 

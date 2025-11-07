@@ -130,6 +130,7 @@ struct Problem {
 	PatchMatchParams params;
 	bool show_medium_result = true;
 	bool save_visualization = true;
+	bool save_weak_npy = true;
 	int iteration;
 };
 

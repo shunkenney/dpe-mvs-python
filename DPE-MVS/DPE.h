@@ -50,7 +50,8 @@ void SaveFinalDepthOutputs(const cv::Mat& depth,
 void SaveFinalWeakOutput(const cv::Mat& weak,
                          const path& weak_vis_path,
                          const path& weak_npy_path,
-                         bool save_visualization);
+                         bool save_visualization,
+                         bool save_weak_npy);
 
 void RunFusion(const path &dense_folder, const std::vector<Problem> &problems);
 void RunFusion_TAT_Intermediate(const path &dense_folder, const std::vector<Problem> &problems);

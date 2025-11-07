@@ -1842,7 +1842,8 @@ void SaveFinalDepthOutputs(const cv::Mat& depth,
 void SaveFinalWeakOutput(const cv::Mat& weak,
                          const path& weak_vis_path,
                          const path& weak_npy_path,
-                         bool save_visualization) {
+                         bool save_visualization,
+                         bool save_weak_npy) {
   if (weak.empty()) {
     return;
   }
@@ -1868,5 +1869,7 @@ void SaveFinalWeakOutput(const cv::Mat& weak,
       }
     }
   }
-  WriteInt8MatAsNpy(weak_npy_path, weak_labels);
+  if (save_weak_npy) {
+    WriteInt8MatAsNpy(weak_npy_path, weak_labels);
+  }
 }
