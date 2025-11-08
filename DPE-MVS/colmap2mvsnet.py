@@ -301,6 +301,41 @@ def calc_score(inputs, images, points3d, extrinsic, args):
             score = 0.0
     return i, j, score
 
+# From MapAnything
+# Fixed resolution mappings with precomputed aspect ratios as keys
+RESOLUTION_MAPPINGS = {
+    518: {
+        1.000: (518, 518),  # 1:1
+        1.321: (518, 392),  # 4:3
+        1.542: (518, 336),  # 3:2
+        1.762: (518, 294),  # 16:9
+        2.056: (518, 252),  # 2:1
+        3.083: (518, 168),  # 3.2:1
+        0.757: (392, 518),  # 3:4
+        0.649: (336, 518),  # 2:3
+        0.567: (294, 518),  # 9:16
+        0.486: (252, 518),  # 1:2
+    },
+    512: {
+        1.000: (512, 512),  # 1:1
+        1.333: (512, 384),  # 4:3
+        1.524: (512, 336),  # 3:2
+        1.778: (512, 288),  # 16:9
+        2.000: (512, 256),  # 2:1
+        3.200: (512, 160),  # 3.2:1
+        0.750: (384, 512),  # 3:4
+        0.656: (336, 512),  # 2:3
+        0.562: (288, 512),  # 9:16
+        0.500: (256, 512),  # 1:2
+    },
+}
+
+# Precomputed sorted aspect ratio keys for efficient lookup
+ASPECT_RATIO_KEYS = {
+    518: sorted(RESOLUTION_MAPPINGS[518].keys()),
+    512: sorted(RESOLUTION_MAPPINGS[512].keys()),
+}
+
 def processing_single_scene(args):
 
     #image_dir = os.path.join(args.dense_folder, 'images')
@@ -319,7 +354,11 @@ def processing_single_scene(args):
         shutil.rmtree(cam_dir)
 
     cameras, images, points3d = read_model(model_dir, args.model_ext)
+
+    new_images = {image_id: image for image_id, image in images.items()}
+
     num_images = len(list(images.items()))
+    
     if args.debug:
         num_images = min(num_images, 50)
 
@@ -336,8 +375,48 @@ def processing_single_scene(args):
         'FOV': ['fx', 'fy', 'cx', 'cy', 'omega'],
         'THIN_PRISM_FISHEYE': ['fx', 'fy', 'cx', 'cy', 'k1', 'k2', 'p1', 'p2', 'k3', 'k4', 'sx1', 'sy1']
     }
+
+    max_width = set()
+    max_height = set()
+
+    # Decide image scale size.
+    camera_names = set()
+    # extrinsic
+    extrinsic = {}
+    for image_id, image in images.items():
+        camera_name = image.name.split("/")[-3]
+        image_name = image.name.split("/")[-1]
+        img_path = os.path.join(image_dir, camera_name, "images", image_name)
+        # Image scales
+        if camera_name not in camera_names:
+            camera_names.add(camera_name)
+            img = cv2.imread(img_path)
+            max_width.add(img.shape[1])
+            max_height.add(img.shape[0])
+        # extrinsic
+        e = np.zeros((4, 4))
+        e[:3, :3] = qvec2rotmat(image.qvec)
+        e[:3, 3] = image.tvec
+        e[3, 3] = 1
+        extrinsic[image_id] = e
+    print('extrinsic[1]\n', extrinsic[1], end='\n\n')
     
-    scale_factor = args.scale_factor
+    if len(max_width) > 1 or len(max_height) > 1:
+        raise ValueError("Different image size found for different cameras. Please resize all images to the same size first.")
+
+    max_width = max_width.pop()
+    max_height = max_height.pop()
+
+    aspect_ratio = max_width / max_height
+
+    resolution_set = 518  # Hardcoded to 518 for downstream compatibility of MapAnything and VGGT.
+
+    # Resolution mappings are already compatible with their respective patch sizes
+    aspect_keys = ASPECT_RATIO_KEYS[resolution_set]
+
+    # Find the closest aspect ratio key using binary search approach
+    closest_key = min(aspect_keys, key=lambda x: abs(x - aspect_ratio))
+    target_width, target_height = RESOLUTION_MAPPINGS[resolution_set][closest_key]
 
     # intrinsic
     intrinsic = {}
@@ -346,31 +425,15 @@ def processing_single_scene(args):
         if 'f' in param_type[cam.model]:
             params_dict['fx'] = params_dict['f']
             params_dict['fy'] = params_dict['f']
+            intrinsic_scale_factor_x = cam.width / target_width
+            intrinsic_scale_factor_y = cam.height / target_height
         i = np.array([
-            [params_dict['fx'] / scale_factor, 0, params_dict['cx'] / scale_factor],
-            [0, params_dict['fy'] / scale_factor, params_dict['cy'] / scale_factor],
+            [params_dict['fx'] / intrinsic_scale_factor_x, 0, params_dict['cx'] / intrinsic_scale_factor_x],
+            [0, params_dict['fy'] / intrinsic_scale_factor_y, params_dict['cy'] / intrinsic_scale_factor_y],
             [0, 0, 1]
         ])
         intrinsic[camera_id] = i
     print('intrinsic\n', intrinsic, end='\n\n')
-
-    new_images = {}
-    for i, image_id in enumerate(sorted(images.keys())):
-        if args.debug:
-            if i >= num_images:
-                break
-        new_images[i+1] = images[image_id]
-    images = new_images
-
-    # extrinsic
-    extrinsic = {}
-    for image_id, image in images.items():
-        e = np.zeros((4, 4))
-        e[:3, :3] = qvec2rotmat(image.qvec)
-        e[:3, 3] = image.tvec
-        e[3, 3] = 1
-        extrinsic[image_id] = e
-    print('extrinsic[1]\n', extrinsic[1], end='\n\n')
 
     # depth range and interval
     depth_ranges = {}
@@ -455,30 +518,14 @@ def processing_single_scene(args):
                 f.write('%d %d ' % (image_id, s))
             f.write('\n')
 
-    max_width = 0
-    max_height = 0
-    for i in range(num_images):
-        img_path = os.path.join(image_dir, images[i + 1].name)
-        img = cv2.imread(img_path)
-        if max_height < img.shape[0]:
-            max_height = img.shape[0]
-        if max_width < img.shape[1]:
-            max_width = img.shape[1]
-
-
     #convert to jpg
-    for i in range(num_images):
-        img_path = os.path.join(image_dir, images[i + 1].name)
+    for i, image in images.items():
+        camera_name = image.name.split("/")[-3]
+        image_name = image.name.split("/")[-1]
+        img_path = os.path.join(image_dir, camera_name, "images", image_name)
         img = cv2.imread(img_path)
-        pad_width = max_width - img.shape[1]
-        pad_height = max_height - img.shape[0]
-        img_pad = np.pad(img, ((0, pad_height), (0, pad_width), (0, 0)), 'constant')
-        img_pad = cv2.resize(img_pad, (int(img_pad.shape[1] / scale_factor), int(img_pad.shape[0] / scale_factor)), interpolation=cv2.INTER_NEAREST)
-        cv2.imwrite(os.path.join(image_converted_dir, '%08d.jpg' % i), img_pad)
-        # if not img_path.endswith(".jpg"):
-        #
-        # else:
-        #     shutil.copyfile(os.path.join(image_dir, images[i+1].name), os.path.join(image_converted_dir, '%08d.jpg' % i))
+        img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_NEAREST)
+        cv2.imwrite(os.path.join(image_converted_dir, '%08d.jpg' % (i-1)), img)
 
 
 if __name__ == '__main__':
@@ -490,7 +537,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--max_d', type=int, default=192)
     parser.add_argument('--interval_scale', type=float, default=1)
-    parser.add_argument('--scale_factor', type=float, default=1)
     
     parser.add_argument('--theta0', type=float, default=5)
     parser.add_argument('--sigma1', type=float, default=1)
